@@ -1,0 +1,439 @@
+---
+title: "STAT 209: Lab 11"
+author: "Casey Troost"
+date: "July 15, 2021"
+output:
+  html_document:
+    css: ~/stat209/originals/lab.css
+    highlight: pygments
+    theme: cerulean
+    code_folding: hide
+    toc: true
+    toc_float: true
+  pdf_document: default
+---
+
+```{r setup, include = FALSE}
+## This is a setup/formatting chunk
+library(tidyverse)
+
+## Some customization.  (Leave this part alone)
+
+theme_set(theme_bw()) # change theme for ggplot2
+
+## Sets default "chunk options"
+knitr::opts_chunk$set(
+  tidy    = FALSE,       # display code as typed
+  size    = "small",     # slightly smaller font for code
+  message = FALSE)  # suppresses some unwanted output
+```
+
+# Making Your Code More Modular
+
+## Goal
+
+Learn to identify repetition in code that could be made more concise by writing a function or an iterative construct, and learn to write such things in R.
+
+## The Data
+
+One of these days, we'll work with some different data, I promise.
+
+**Load the packages and data:**
+```{r, message = FALSE}
+library(tidyverse)
+library(babynames)
+data(babynames)    ## SSA data
+```
+
+
+## A repetitive task
+
+One of the questions we have been interested in when working with the baby names data is: "In what year did the name <some name> reach its peak in popularity?"
+
+For the name Colin, for example, we can answer this question with the following pipeline:
+
+**Code:**
+```{r}
+total_births_by_year <- babynames %>%
+  group_by(year) %>%
+  summarize(total_births = sum(n))
+babynames %>%
+  filter(name == "Colin") %>%
+  group_by(year) %>%
+  summarize(total_for_name = sum(n)) %>%
+  left_join(total_births_by_year) %>%
+  mutate(percentage_for_year = 100 * total_for_name / total_births) %>%
+  slice_max(order_by = percentage_for_year, n = 1) %>%
+  select(year, percentage_for_year)
+```
+
+So, the name "Colin" has never been a more popular choice for new babies than it was in 2004, being given to (approximately) 0.13% of all babies, regardless of sex.
+
+
+## Writing a function
+
+If I want to get the same result for a different name, say "Fred", I could just copy and paste the above code and change the name.  But,
+
+* This is annoying
+* This makes my code harder to read
+* If I want to change something (for instance, I decide I don't want to combine sexes after all), I have to go through and change it in every place.
+
+Instead, I can write a function that captures the "template" for this calculation, and lets me instantiate that template with whatever specific input I want.
+
+What are the inputs to this function?  If I always want to return the single peak year, there's just one input: the name.  So I can write:
+
+**Code:**
+```{r}
+peak_year_for_name <- function(name_of_interest) 
+{
+  total_births_by_year <- babynames %>%
+    group_by(year) %>%
+    summarize(total_births = sum(n))
+  babynames %>%
+    filter(name == name_of_interest) %>%
+    group_by(year) %>%
+    summarize(total_for_name = sum(n)) %>%
+    left_join(total_births_by_year) %>%
+    mutate(percentage_for_year = 100 * total_for_name / total_births) %>%
+    slice_max(order_by = percentage_for_year, n = 1) %>%
+    select(year, percentage_for_year)  
+}
+```
+
+The body of the function is exactly the code we wrote before, but instead of hardcoding "Colin", the name in the filter is replaced by the `name_of_interest` argument (whatever its value ends up being when the function is called).
+
+Now I can just run this function, plugging in whatever name I want, and I quickly get results.  Here are some results for various members of my own family:
+
+**Code:**
+```{r}
+peak_year_for_name("Colin")  # me             (born 1980s)
+peak_year_for_name("Megan")  # my sister      (born 1980s)
+peak_year_for_name("Bruce")  # my father      (born 1950s)
+peak_year_for_name("Mary")   # my mother      (born 1950s)
+peak_year_for_name("Arlo")   # my 9-year-old  (born 2010s)
+peak_year_for_name("Esai")   # my 6-year-old  (born 2010s)
+```
+
+### Function signatures
+
+Most functions are designed to work with certain _kinds_ of inputs.  For example, `name_of_interest` in the above should be a quoted text string, not a number, not a data frame, etc.  
+
+In some languages, when you write a function, you explicitly encode that your function _must_ take a certain kind of input.  In R, you don't do that; R is what's called a "dynamically typed" language, in which functions will accept whatever input you give them, and if what they do happens to work for that input (even if it's not something the author envisioned), it will do it; otherwise you'll get an error somewhere in the execution of the function.
+
+As I'm sure you've seen, this flexibility can sometimes make it difficult to track down what is causing an error in R, and so it is worth trying to avoid this sort of thing by including some documentation at the top of your function indicating what type of input you intend the function to be used with.  The user of the function is free to violate that intention, but at least they go in with their eyes open.
+
+In R, you can type `formals(my_function_name)` to see at least the _names_ of the arguments to a function.  For example:
+
+**Code**
+```{r}
+formals(peak_year_for_name)
+```
+
+we see that `peak_year_for_name` takes one argument, called `name_of_interest`.
+
+For functions that are part of an R package, documentation is viewable with the `?function_name` syntax (or, equivalently, with `help(function_name)`). This of course won't exist for custom functions you've written.
+
+
+### Return values
+
+The "value" of a function (the thing it returns, if, for example, you are assigning its result to a variable) is, by default, the return value of the last command executed by the function.  In our function there is only one command (which consists of several component commands connected in a pipeline), and so the return value is the return value of the pipeline.
+
+If we wanted to be more explicit, we could assign the result of the pipeline to a variable (we might call it `result`), and add the line `return(result)` at the end of our function.
+
+It's a good idea to do this if your function contains more than one line, to make it clear which part of the function body is the return value.  For one-liners (and maybe some very simple multi liners), it's a judgment call as to whether it makes it clearer to do this or not.
+
+In "statically typed" languages (the kind where you specify the types that need to be passed in for each argument, like C++, Java, etc), part of the signature of a function is the type of thing that it returns.  In dynamically typed languages (like R, Python, etc), the type of the return value could well depend on the types of the arguments provided.  But, again, it is a good idea to document the _intended_ return type.
+
+
+### Default arguments
+
+Often times, we want to allow our functions to be flexible, by allowing the user to alter several aspects of what it does.  We make our functions more flexible by adding more inputs, each of which constitutes a "degree of freedom" for our function.  But if most use cases involve sensible defaults, it is cumbersome to force the user to input these defaults every time they use the function.
+
+We can have the "best of both worlds" (flexibility without cumbersome function calls) by using _default argument values_.
+
+For example, I could make my `peak_year_for_name` function more flexible by having the function return the most popular `n` years:
+
+**Code:**
+```{r}
+peak_years_for_name <- function(name_of_interest, n_years) 
+{
+  total_births_by_year <- babynames %>%
+    group_by(year) %>%
+    summarize(total_births = sum(n))
+  babynames %>%
+    filter(name == name_of_interest) %>%
+    group_by(year) %>%
+    summarize(total_for_name = sum(n)) %>%
+    left_join(total_births_by_year) %>%
+    mutate(percentage_for_year = 100 * total_for_name / total_births) %>%
+    slice_max(order_by = percentage_for_year, n = n_years) %>%
+    select(year, percentage_for_year)    
+}
+```
+
+As written, this function now _requires_ the user to specify a number of years.  The following will produce an error, since I haven't supplied the `n_years` argument.
+
+**Code:**
+```{r, eval = FALSE}
+peak_years_for_name("Colin")
+```
+
+
+If we think that most often the user will just want to see the single most popular year, I can give that second argument a _default value_ that makes the above work as before.
+
+**Function (Re-)definition:**
+```{r}
+peak_years_for_name <- function(name_of_interest, n_years = 1) 
+{
+  total_births_by_year <- babynames %>%
+    group_by(year) %>%
+    summarize(total_births = sum(n))
+  babynames %>%
+    filter(name == name_of_interest) %>%
+    group_by(year) %>%
+    summarize(total_for_name = sum(n)) %>%
+    left_join(total_births_by_year) %>%
+    mutate(percentage_for_year = 100 * total_for_name / total_births) %>%
+    slice_max(order_by = percentage_for_year, n = n_years) %>%
+    select(year, percentage_for_year)  
+}
+```
+
+**Some function calls:**
+```{r}
+peak_years_for_name("Colin")                # Use the default
+peak_years_for_name("Colin", 5)             # Override the default
+peak_years_for_name("Colin", n_years = 5)   # Override the default, using the arg name
+```
+
+
+### Function scope
+
+You might have noticed that in our function we hardcoded the dataset to be `babynames`.  If we had tried to call this function without having run `library(babynames)` above, we'd get an error, since `babynames` would not then be defined.  If you "unload" the `babynames` package (undoing the effect of `library()`) and then try to call the function, R will complain that the `babynames` data doesn't exist. 
+
+**Code:**
+```{r, eval = FALSE}
+rm(babynames) # remove the dataset from the environment
+detach("package:babynames", unload = TRUE) # unload the package
+peak_years_for_name("Colin")  ## ERRRORRRR
+```
+
+Someone calling this function would have no easy way of knowing why this happened, since their function call didn't refer to that dataset; for that reason among others, it's not great coding practice to hardcode things inside a function like that.
+
+(Let's make sure to bring back the `babynames` library for later)
+
+**Code:**
+```{r}
+library(babynames)
+data(babynames)
+```
+
+How does R know where to look for definitions of things that are referenced in a function?  A complete answer would involve a lot of caveats, but for the most part, R will first look inside the function for a definition (at its arguments, and at anything that is created within the function itself), and if it doesn't find anything, it will look in the "global" environment (that is, at stuff that was defined or loaded into the environment by previous assignments or calls).
+
+In theory we could have made a `dataset` argument to our `peak_years_for_name()` function so that it didn't depend on something defined in the global environment:
+
+**Code:**
+```{r}
+peak_year_for_name <- function(dataset, name_of_interest, n_years = 1) 
+{
+  total_births_by_year <- dataset %>%
+    group_by(year) %>%
+    summarize(total_births = sum(n))
+  dataset %>%
+    filter(name == name_of_interest) %>%
+    group_by(year) %>%
+    summarize(total_for_name = sum(n)) %>%
+    left_join(total_births_by_year) %>%
+    mutate(percentage_for_year = 100 * total_for_name / total_births) %>%
+    slice_max(order_by = percentage_for_year, n = n_years) %>%
+    select(year, percentage_for_year)    
+}
+```
+
+Notice that we still have hardcoded variable names here, so this function will only work if the dataset we provide has the right columns, but this can be useful if we are going to work with (say) different subsets of a dataset that we obtain by `filter()`ing:
+
+```{r}
+babynames %>%
+  filter(year > 1920 & year < 1999) %>%
+  peak_year_for_name(name_of_interest = "Mary")
+```
+
+
+## Exercises on Functions
+
+The following exercises involve writing functions designed to tell us things about flights, using the `nycflights13` package. Load it first:
+
+```{r}
+library(nycflights13)
+data(flights)
+```
+
+Recall that this package provides the dataset `flights` about individual flights, and the datasets `airports` and `planes` about... those things (as well as a couple others).
+
+1. Write a function called `top_n_destinations` that takes a `dataset` argument, a `carrierID` argument, an `origin_airport` argument, and an `n_destinations` argument, and retrieves the `n_destinations` most common airport destinations (`dest`s) of flights taking off from the airport whose code is provided in the `origin_airport` argument, and how often the carrier flew there.
+
+```{r}
+top_n_destinations <- function(dataset, carrierID, origin_airport, n_destinations = 10) {
+  
+  flight_destination_results <- dataset %>%
+    filter(carrier == carrierID, origin == origin_airport) %>%
+    group_by(dest) %>%
+    summarize(
+      carrierID = carrierID,
+      origin_airport = origin_airport,
+      num_flights = n()) %>%
+    slice_max(., n = n_destinations, order_by = num_flights)
+  return(flight_destination_results)}
+```
+
+2. Use your function to find the top five destinations for Delta Airlines (`DL`) flights from JFK (one of the three airports in New York City) using the `flights` dataset.
+
+```{r}
+top_n_destinations(flights, "DL", "JFK", 5)
+```
+
+
+3. Use your function to find the top five destinations for American Airlines (`AA`) flights from JFK. 
+```{r}
+top_n_destinations(flights, "AA", "JFK", 5)
+```
+
+4. Write and test function that, given a `dataset`, an `origin_code` and a `destination_code` (e.g. JFK to LAX), will retrieve the `n_carriers` **carriers** with the most flights from the origin to the destination, along with the average **arrival delay** time for those flights.
+
+```{r}
+carrier_count <- function(dataset, origin_code, destination_code, n_carriers) {
+  ccount_result <- dataset %>%
+    filter(origin == origin_code & dest == destination_code) %>%
+    group_by(carrier) %>%
+    summarize(
+      origin = origin_code,
+      dest = destination_code,
+      carrier_tally = n(),
+      arrival_delay = mean(arr_delay, na.rm = TRUE)) %>%
+    slice_max(., n = n_carriers, order_by = carrier_tally)
+  return(ccount_result)}
+
+carrier_count(flights, "JFK", "SFO", 5)
+```
+
+## Iteration
+
+Computers are excellent at repetition, as long as you tell them _precisely_ what to repeat.
+
+Remember the example above where I called my function on a bunch of names of people in my family?  I can make that even more efficient by creating the list of names I'm interested in up front, and then telling the computer "Call this function on each one of these names, and return the results".
+
+In R, the `lapply()` (short for "list apply") is useful for this sort of thing, provided the list of argument values goes with the first argument of my function.
+
+**Code:**
+```{r}
+my_name_list <- c("Colin", "Megan", "Bruce", "Mary", "Arlo", "Esai")
+lapply(my_name_list, FUN = peak_year_for_name, dataset = babynames)
+```
+
+Notice that the argument I wanted to vary from one call to the next went in the `X` position for `lapply()`, whereas the argument(s) that stayed constant were provided to `lapply()` using their names. 
+Now, this result is a bit inelegant; the function always returns a data frame with a single entry.  Wouldn't it be nice if we could "stack" these into a single data frame?
+
+We can!  The `bind_rows()` function will do this for us. Examine the results of the following code after each step, to make sure you understand what's happening.
+
+```{r}
+my_name_list %>% 
+  lapply(FUN = peak_year_for_name, dataset = babynames) %>%
+  bind_rows() %>%
+  mutate(name = my_name_list) %>%
+  select(name, year, percentage_for_year)
+```
+
+(this time I passed `lapply` its first (`X`) argument via a pipe, but it would have been equivalent to put `my_name_list` first inside the parens instead)
+
+### Loops, and Alternatives to Loops
+
+If you have programmed in another language before, you likely would have handled something like this using a "loop" such as a `for` loop.  You can write for loops in R, but it is more "idiomatic" to use the above sort of "apply" construct; and in certain cases it's more efficient too (which is important when there are a lot of iterations involved).
+
+If you find yourself wanting a `for` loop, ask yourself whether you could handle what you wanted to do with a function whose first argument is the thing you want to iterate over.
+
+
+5. Use `lapply()` and the function that you wrote in Exercise 1 to find the top airport destination for Delta (`DL`), American (`AA`), and United (`UA`).
+
+```{r}
+flight_list = c("DL", "AA", "UA")
+flight_list %>%
+  lapply(., 
+         FUN = top_n_destinations, 
+         dataset = flights, 
+         origin_airport = "JFK", 
+         n_destinations = 2) %>%
+  bind_rows()
+  
+```
+
+
+6. Use `lapply()` and the function that you wrote in Exercise 4 to find the carriers with the most flights from JFK to Chicago O'Hare (`ORD`), Los Angeles International (`LAX`), and San Francisco International (`SFO`) airports, respectively. In order to have the destination shown in the output, you will need to do a couple of things: First, the vector of destinations that you pass to `lapply()` should have named entries (it should be in the form `c(name1 = value1, name2 = value2, ...)`, where `name1`, `name2`, etc are the labels you want displayed in the output, and `value1`, `value2`, etc are the actual argument values you're passing to your function). Second, set `.id = "destination"` as an argument to `bind_rows()` so that the output includes a column called `destination` that contains `name1`, `name2`, etc. 
+
+```{r}
+trip_carrier_count <- c(ORD = "ORD", LAX = "LAX", SFO = "SFO")
+trip_carrier_count %>%
+lapply(
+  .,
+  FUN = carrier_count,
+  dataset = flights,
+  origin_code = "JFK",
+  n_carriers = 3) %>%
+  bind_rows(.id = "destination")
+
+```
+
+### Applying a function to a grouped data frame
+
+The following function computes the top 10 most popular names in the dataset passed to it via the `dataset` argument:
+
+**Code:**
+```{r}
+top_n_names <- function(dataset, n_returned) 
+{
+  overall_total <- dataset %>%
+    summarize(total_births = sum(n)) %>%
+    pull(total_births)
+  dataset %>%
+    group_by(name) %>%
+    summarize(
+      total_for_name      = sum(n),
+      percent_for_name = total_for_name / overall_total * 100) %>%
+    slice_max(
+      order_by = total_for_name, 
+      n        = n_returned) %>%
+    rownames_to_column(var = "rank")
+}
+```
+
+Here we use it to find the top 10 names for babies born in 2000.
+
+```{r}
+babynames %>%
+  filter(year == 2000) %>%
+  top_n_names(n_returned = 10)
+```
+
+If we want to apply this function to find the most popular name in a particular decade, we could simply `filter` our data to keep only years in the range of interest, and call the function on the filtered data.
+
+But suppose we want to do this for _every_ decade in the 20th century.  We could theoretically create 10 datasets, put them in a list, and use `lapply` on the list of datasets.  But it's simpler to take advantage of the `do()` function for this.  This is seen most easily by example:
+
+**Code:**
+```{r}
+## The floor() function rounds down to the nearest integer
+top_by_decade <- babynames %>%
+  mutate(decade = 10 * floor(year / 10)) %>%
+  group_by(decade) %>%
+  do(
+    top_n_names(
+      dataset    = ., 
+      n_returned = 10))
+## The period is a placeholder for "each dataset in the list"
+top_by_decade
+```
+
+Note that since `top_n_names()` returns a data frame with `n_returned` rows (for whatever value of `n_returned` we supply when we call the function), the result of this operation is a big "stacked" data frame with `n_returned` names per decade.
+
+**Note: If you have worked with the `mosaic` package, you likely used another function called `do()`.  It's related to the `dplyr` one, but not identical, so if you are working in an R session with both packages loaded, it's a good idea to be explicit about which one you want to be using.  You can do this by writing either `dplyr::do()` or `mosaic::do()`.**
+
+
+7. Use `do()` with your `top_n_destinations` function from Exercise 1 to find the top destination for each airline flights from `JFK` in each month of 2013. Since `carrierID` is an input to `top_n_destinations`, you'll probably want to `pull` the `carrier` column from each grouped dataset using `pull(., carrier)` in your call to `top_n_destinations`.
